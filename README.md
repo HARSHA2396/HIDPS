@@ -1,0 +1,252 @@
+# AI-Powered SOC Dashboard
+
+Production-oriented SOC dashboard for an edge-cloud IDPS workflow. The project includes a React frontend, a FastAPI backend, live WebSocket alert streaming, investigation workflows, mitigation actions, and production packaging assets for containerized deployment.
+
+## What is included
+
+- Real-time dashboard with attack map, alert stream, investigation panel, response actions, and analytics.
+- Additional operational sections for Threat Intelligence, Edge Nodes, Logs & Forensics, Access Control, and Settings.
+- FastAPI telemetry server with health, stats, explainability, cloud intel, and mitigation endpoints.
+- Dockerfiles for both services and a root `docker-compose.yml`.
+- Environment variable examples for frontend and backend production configuration.
+
+## Frontend
+
+Path: `frontend`
+
+Important commands:
+
+```bash
+npm install
+npm run dev
+npm run lint
+npm run build
+```
+
+Environment variables:
+
+- `VITE_API_BASE_URL`
+- `VITE_WS_BASE_URL`
+
+Example values are available in `frontend/.env.example`.
+
+## Backend
+
+Path: `backend`
+
+Recommended local setup:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
+```
+
+Backend environment variables:
+
+- `HOST`
+- `PORT`
+- `RELOAD`
+- `ALLOWED_ORIGINS`
+
+Example values are available in `backend/.env.example`.
+
+## Using your `.pth` model with ONNX
+
+If your intrusion model currently exists as a PyTorch checkpoint (`.pth`), the practical path for this project is:
+
+1. Export the model to ONNX.
+2. Deploy the ONNX model behind an inference service or load it directly in the backend.
+3. Send real website or network features into this backend.
+4. Let the backend turn model predictions into alerts for the webapp.
+
+### 1. Export `.pth` to `.onnx`
+
+Install the optional ML packages first:
+
+```bash
+pip install torch onnx onnxruntime numpy
+```
+
+Template script:
+
+```bash
+python backend/examples/export_pth_to_onnx.py --checkpoint path\to\model.pth --output path\to\model.onnx --input-size 16
+```
+
+You must edit [backend/examples/export_pth_to_onnx.py](/D:/IDPSProject/backend/examples/export_pth_to_onnx.py) and replace `load_model()` with your actual model class and checkpoint loading logic.
+
+### 2. Enable ONNX inference in this backend
+
+Optional runtime adapter:
+
+- [backend/model_adapter.py](/D:/IDPSProject/backend/model_adapter.py)
+- [backend/.env.example](/D:/IDPSProject/backend/.env.example)
+
+Set these environment variables:
+
+```env
+MODEL_RUNTIME=onnx
+ONNX_MODEL_PATH=D:\models\idps_model.onnx
+MODEL_FEATURE_ORDER=packet_rate,avg_packet_size,duration,entropy,connection_rate,failed_logins,payload_kb
+MODEL_LABELS=Normal,DoS,Brute Force,Web Attack,Infiltration,Port Scan
+```
+
+When `MODEL_RUNTIME=onnx` is enabled, the backend can infer the attack type automatically if you send:
+
+```json
+{
+  "attack_type": "AUTO",
+  "source_ip": "203.0.113.25",
+  "source_type": "web-access",
+  "telemetry_source": "nginx-prod",
+  "asset_name": "checkout-api",
+  "features": {
+    "packet_rate": 1200,
+    "avg_packet_size": 512,
+    "duration": 8.2,
+    "entropy": 4.1,
+    "connection_rate": 12.4,
+    "failed_logins": 18,
+    "payload_kb": 2.9
+  }
+}
+```
+
+The integration point is the live inference hook in [backend/engine.py](/D:/IDPSProject/backend/engine.py), where `attack_type: "AUTO"` will try the ONNX adapter first.
+
+### 3. Deploy the model in cloud
+
+You have two common deployment options:
+
+- Load the ONNX model directly inside this FastAPI backend.
+- Deploy the ONNX model as a separate cloud inference service and have this backend call it.
+
+Recommended cloud approach:
+
+1. Package the ONNX model in a small inference API.
+2. Expose a `/predict` endpoint that accepts feature vectors.
+3. Return `attack_type` and `confidence`.
+4. Keep this SOC backend responsible for alerting, investigation workflow, and dashboard streaming.
+
+That separation is usually cleaner because:
+
+- model scaling is independent from SOC UI traffic
+- model versioning is easier
+- rollbacks are safer
+- you can replace the model without changing the dashboard
+
+### 4. Integrate the model with this webapp
+
+This webapp does not run the model in the browser. The integration is:
+
+- website logs or network sensors generate features
+- backend receives the features through `/api/ingest/features`
+- backend runs ONNX inference or uses the provided `attack_type`
+- backend creates an alert
+- frontend receives the alert over WebSocket and renders it in the SOC dashboard
+
+That means your real model should connect to the backend, not directly to the React frontend.
+
+## Analyst login
+
+The dashboard now starts with a login page and token-based analyst sessions.
+
+Default demo accounts:
+
+- `admin-01@nexussoc.local` / `NexusAdmin!2026`
+- `analyst-07@nexussoc.local` / `NexusHunter!2026`
+- `responder-03@nexussoc.local` / `NexusRespond!2026`
+- `auditor-02@nexussoc.local` / `NexusAudit!2026`
+
+Implemented security controls:
+
+- PBKDF2 password hashing
+- session expiry
+- repeated-failure account lockout
+- role-based access for manager and response operations
+
+## Real telemetry ingestion
+
+You can push website or network telemetry into the backend at:
+
+```bash
+POST /api/ingest/features
+```
+
+Example website event:
+
+```bash
+curl -X POST http://localhost:8000/api/ingest/features ^
+  -H "Content-Type: application/json" ^
+  -d "{\"attack_type\":\"Web Attack\",\"source_ip\":\"203.0.113.25\",\"source_type\":\"web-access\",\"telemetry_source\":\"nginx-prod\",\"asset_name\":\"checkout-api\",\"features\":{\"request_path\":\"/login\",\"status_code\":401,\"failed_logins\":12,\"payload_kb\":3.8}}"
+```
+
+Example network event:
+
+```bash
+curl -X POST http://localhost:8000/api/ingest/features ^
+  -H "Content-Type: application/json" ^
+  -d "{\"attack_type\":\"DoS\",\"source_ip\":\"198.51.100.77\",\"dest_ip\":\"10.0.10.25\",\"source_type\":\"network-flow\",\"telemetry_source\":\"suricata-edge\",\"asset_name\":\"edge-gateway\",\"features\":{\"packet_rate\":9800,\"burst_score\":0.96,\"syn_ratio\":0.91}}"
+```
+
+Helper scripts are included in `backend/examples`:
+
+```bash
+python backend/examples/send_ingest_event.py --source-ip 198.51.100.77 --attack-type DoS --telemetry-source netflow-lab --feature packet_rate=9800 --feature burst_score=0.96
+python backend/examples/send_nginx_log.py --log-file C:\logs\nginx\access.log --telemetry-source nginx-prod --asset-name checkout-api
+```
+
+Integration pattern:
+
+- Website: tail Nginx, Apache, or WAF logs and POST normalized request features.
+- Network: export NetFlow, Zeek, Suricata, or custom packet features and POST normalized flow features.
+- The backend turns those into live alerts and broadcasts them to the dashboard WebSocket clients.
+
+## Cloud deployment notes for models
+
+If you deploy the model separately in cloud, keep these responsibilities split:
+
+- model service: ONNX inference only
+- SOC backend: authentication, alert lifecycle, forensics, escalation, reporting
+- frontend: analyst workflow and visualization
+
+For production, use:
+
+- HTTPS for the model API
+- API keys or service-to-service auth between backend and model service
+- versioned model endpoints such as `/v1/predict`
+- structured responses containing at least `attack_type`, `confidence`, and optional class scores
+
+## Production deployment
+
+### Docker Compose
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+Default exposed ports:
+
+- Frontend: `http://localhost:8080`
+- Backend: `http://localhost:8000`
+
+### Production notes
+
+- Build the frontend with the final public backend URLs using `VITE_API_BASE_URL` and `VITE_WS_BASE_URL`.
+- Set `ALLOWED_ORIGINS` on the backend to the exact frontend domains you trust.
+- Run the backend behind a process manager and terminate TLS at an ingress or reverse proxy.
+- Store secrets and operational credentials outside the repository.
+
+## Validation
+
+Frontend validation used during development:
+
+```bash
+cd frontend
+npm run lint
+.\node_modules\.bin\tsc.cmd -b
+```
