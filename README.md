@@ -316,6 +316,49 @@ Recommended Netlify deployment flow:
 
 If you want a one-click template-style flow later, you can also add a Deploy to Netlify button in this README.
 
+### Render backend deployment
+
+This repository now includes a Render blueprint in [render.yaml](/D:/IDPSProject/render.yaml) for the FastAPI backend.
+
+Recommended deployment flow:
+
+1. Open [Render Dashboard](https://dashboard.render.com/).
+2. Create a new Blueprint instance from [HIDPS](https://github.com/HARSHA2396/HIDPS).
+3. Render will detect [render.yaml](/D:/IDPSProject/render.yaml) and provision the backend service from `backend`.
+4. Set these required environment variables in Render:
+
+```env
+DATABASE_URL=postgresql://username:password@host/database?sslmode=require
+ALLOWED_ORIGINS=https://soc-dashbaord.netlify.app
+```
+
+Render service details:
+
+- runtime: Python
+- root directory: `backend`
+- build command: `pip install -r requirements.txt`
+- start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- health check: `/api/health`
+
+After Render gives you a backend URL such as:
+
+```text
+https://hidps-backend.onrender.com
+```
+
+set these on Netlify and redeploy the frontend:
+
+```env
+VITE_API_BASE_URL=https://hidps-backend.onrender.com
+VITE_WS_BASE_URL=wss://hidps-backend.onrender.com
+```
+
+At that point the live Netlify site should be able to:
+
+- log in against the FastAPI backend
+- persist users and sessions in Neon PostgreSQL
+- connect to the authenticated WebSocket alert stream
+
 ## Validation
 
 Frontend validation used during development:
