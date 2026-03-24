@@ -241,6 +241,37 @@ Default exposed ports:
 - Run the backend behind a process manager and terminate TLS at an ingress or reverse proxy.
 - Store secrets and operational credentials outside the repository.
 
+### Netlify frontend deployment
+
+This project can be deployed to Netlify for the frontend only.
+
+Important:
+
+- Netlify is a good fit for the React frontend in `frontend`.
+- The FastAPI backend in `backend` should be deployed separately on a backend host such as Render, Railway, Fly.io, an EC2/VM, or a container platform.
+- After backend deployment, point Netlify to that backend with environment variables.
+
+Netlify configuration is already included in [netlify.toml](/D:/IDPSProject/netlify.toml):
+
+- base directory: `frontend`
+- build command: `npm run build`
+- publish directory: `dist`
+
+Required Netlify environment variables:
+
+- `VITE_API_BASE_URL=https://your-backend-domain`
+- `VITE_WS_BASE_URL=wss://your-backend-domain`
+
+Recommended Netlify deployment flow:
+
+1. Open [Netlify app import](https://app.netlify.com/start).
+2. Import the GitHub repo: [HIDPS](https://github.com/HARSHA2396/HIDPS).
+3. Confirm build settings from `netlify.toml`.
+4. Add `VITE_API_BASE_URL` and `VITE_WS_BASE_URL`.
+5. Deploy the site.
+
+If you want a one-click template-style flow later, you can also add a Deploy to Netlify button in this README.
+
 ## Validation
 
 Frontend validation used during development:
