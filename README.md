@@ -256,6 +256,7 @@ Netlify configuration is already included in [netlify.toml](/D:/IDPSProject/netl
 - base directory: `frontend`
 - build command: `npm run build`
 - publish directory: `dist`
+- Netlify install compatibility: `NPM_FLAGS=--legacy-peer-deps`
 
 Required Netlify environment variables:
 
