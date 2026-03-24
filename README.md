@@ -49,8 +49,44 @@ Backend environment variables:
 - `PORT`
 - `RELOAD`
 - `ALLOWED_ORIGINS`
+- `DATABASE_URL`
 
 Example values are available in `backend/.env.example`.
+
+## PostgreSQL database setup
+
+This project now supports PostgreSQL-backed authentication and user storage.
+
+Use your hosted Neon connection string as `DATABASE_URL` on the backend host:
+
+```env
+DATABASE_URL=postgresql://username:password@host/database?sslmode=require
+```
+
+What is stored in PostgreSQL:
+
+- analyst and manager users
+- password hashes
+- lockout state for repeated login failures
+- active dashboard sessions
+
+What still remains in app memory:
+
+- simulated alerts
+- transient investigation state
+- pending response actions
+
+Important:
+
+- do not commit the real Neon connection string into Git
+- set `DATABASE_URL` only in your backend hosting provider's environment variables
+- set `ALLOWED_ORIGINS` to your Netlify domain, for example:
+
+```env
+ALLOWED_ORIGINS=https://soc-dashbaord.netlify.app
+```
+
+On startup, the backend auto-creates the auth tables and seeds the default users if the database is empty.
 
 ## Using your `.pth` model with ONNX
 
@@ -262,6 +298,13 @@ Required Netlify environment variables:
 
 - `VITE_API_BASE_URL=https://your-backend-domain`
 - `VITE_WS_BASE_URL=wss://your-backend-domain`
+
+If authentication is failing on a Netlify-hosted frontend, the usual cause is one of these:
+
+- the FastAPI backend is not deployed separately
+- `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` are missing in Netlify
+- `ALLOWED_ORIGINS` on the backend does not include the Netlify site
+- `DATABASE_URL` is missing on the backend, so you are not using the hosted database
 
 Recommended Netlify deployment flow:
 

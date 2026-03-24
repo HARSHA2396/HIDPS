@@ -119,6 +119,7 @@ async def simulate_edge_inferencing():
 
 @app.on_event("startup")
 async def start_background_jobs():
+    engine.initialize_storage()
     asyncio.create_task(simulate_edge_inferencing())
 
 
@@ -130,6 +131,7 @@ async def health_check():
         "connected_clients": len(broadcaster.active_sockets),
         "generated_alerts": len(engine.alert_history),
         "pending_approvals": len(engine.pending_actions),
+        "storage": engine.storage_status(),
     }
 
 

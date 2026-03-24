@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import os
 import random
 import secrets
 import time
@@ -7,6 +8,7 @@ from collections import Counter, deque
 from statistics import mean
 from typing import Any, Dict, List, Optional
 
+from db import DatabaseStore
 from model_adapter import build_model_adapter
 from schemas import (
     ActionApprovalRequest,
@@ -225,6 +227,7 @@ class IDPSTuningEngine:
         self.user_roster: Dict[str, UserAccount] = self._seed_user_roster()
         self.auth_credentials: Dict[str, Dict[str, Any]] = self._seed_auth_credentials()
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
+        self.database = DatabaseStore(os.getenv("DATABASE_URL", ""))
         self.model_adapter = build_model_adapter()
         self.telemetry_state: Dict[str, Dict[str, Any]] = {
             source_id: {
@@ -317,7 +320,64 @@ class IDPSTuningEngine:
             for user_id, password in default_passwords.items()
         }
 
+    def initialize_storage(self) -> None:
+        if not self.database.enabled:
+            return
+        self.database.initialize(
+            default_users=[
+                {
+                    "user_id": user.user_id,
+                    "name": user.name,
+                    "email": user.email,
+                    "role": user.role,
+                    "team": user.team,
+                    "shift": user.shift,
+                    "status": user.status,
+                    "queue_level": user.queue_level,
+                    "permissions": user.permissions,
+                }
+                for user in self.user_roster.values()
+            ],
+            default_credentials=self.auth_credentials,
+        )
+
+    def storage_status(self) -> str:
+        return "database" if self.database.enabled else "memory"
+
+    def _get_all_users(self) -> List[UserAccount]:
+        if self.database.enabled:
+            return [
+                UserAccount(
+                    user_id=row["user_id"],
+                    name=row["name"],
+                    email=row["email"],
+                    role=row["role"],
+                    team=row["team"],
+                    shift=row["shift"],
+                    status=row["status"],
+                    queue_level=row["queue_level"],
+                    permissions=row["permissions"],
+                )
+                for row in self.database.list_users()
+            ]
+        return list(self.user_roster.values())
+
     def _lookup_user(self, identifier: str) -> Optional[UserAccount]:
+        if self.database.enabled:
+            row = self.database.find_user_by_identifier(identifier)
+            if not row:
+                return None
+            return UserAccount(
+                user_id=row["user_id"],
+                name=row["name"],
+                email=row["email"],
+                role=row["role"],
+                team=row["team"],
+                shift=row["shift"],
+                status=row["status"],
+                queue_level=row["queue_level"],
+                permissions=row["permissions"],
+            )
         normalized = identifier.strip().lower()
         for user in self.user_roster.values():
             if normalized in {user.user_id.lower(), user.name.lower(), user.email.lower()}:
@@ -326,6 +386,9 @@ class IDPSTuningEngine:
 
     def _purge_expired_sessions(self) -> None:
         now = time.time()
+        if self.database.enabled:
+            self.database.revoke_expired_sessions(now)
+            return
         expired_tokens = [
             token for token, session in self.active_sessions.items() if session["expires_at"] <= now
         ]
@@ -352,7 +415,11 @@ class IDPSTuningEngine:
             self._verify_password(password, self._hash_password("invalid-password", salt="static-invalid-salt"))
             raise ValueError("Invalid credentials.")
 
-        credential = self.auth_credentials.get(user.user_id)
+        credential = (
+            self.database.find_user_by_identifier(identifier)
+            if self.database.enabled
+            else self.auth_credentials.get(user.user_id)
+        )
         if not credential:
             raise ValueError("Account is not provisioned for dashboard access.")
 
@@ -363,21 +430,33 @@ class IDPSTuningEngine:
             )
 
         if not self._verify_password(password, credential["password_hash"]):
-            recent_failures = [
-                ts for ts in credential["failed_attempts"] if now - ts < LOGIN_LOCKOUT_WINDOW_SECONDS
-            ]
-            recent_failures.append(now)
-            credential["failed_attempts"] = recent_failures
-            if len(recent_failures) >= MAX_LOGIN_ATTEMPTS:
+            if self.database.enabled:
+                failed_attempts = int(credential.get("failed_attempts", 0)) + 1
+                credential["failed_attempts"] = failed_attempts
+            else:
+                recent_failures = [
+                    ts for ts in credential["failed_attempts"] if now - ts < LOGIN_LOCKOUT_WINDOW_SECONDS
+                ]
+                recent_failures.append(now)
+                credential["failed_attempts"] = recent_failures
+                failed_attempts = len(recent_failures)
+
+            if failed_attempts >= MAX_LOGIN_ATTEMPTS:
                 credential["locked_until"] = now + LOGIN_LOCKOUT_WINDOW_SECONDS
-                credential["failed_attempts"] = []
+                credential["failed_attempts"] = 0 if self.database.enabled else []
+                if self.database.enabled:
+                    self.database.update_login_failure(user.user_id, 0, credential["locked_until"])
                 raise PermissionError(
                     "Account locked due to repeated failures. Try again in 300 seconds."
                 )
+            if self.database.enabled:
+                self.database.update_login_failure(user.user_id, failed_attempts, 0.0)
             raise ValueError("Invalid credentials.")
 
         credential["failed_attempts"] = []
         credential["locked_until"] = 0.0
+        if self.database.enabled:
+            self.database.reset_login_failures(user.user_id)
         token = secrets.token_urlsafe(32)
         session = {
             "user_id": user.user_id,
@@ -386,7 +465,10 @@ class IDPSTuningEngine:
             "last_seen": now,
             "expires_at": now + SESSION_TTL_SECONDS,
         }
-        self.active_sessions[token] = session
+        if self.database.enabled:
+            self.database.create_session(token, user.user_id, client_ip, now, session["expires_at"])
+        else:
+            self.active_sessions[token] = session
         return {
             "token": token,
             "expires_at": session["expires_at"],
@@ -395,6 +477,24 @@ class IDPSTuningEngine:
 
     def get_user_for_token(self, token: str) -> Optional[AuthUser]:
         self._purge_expired_sessions()
+        if self.database.enabled:
+            row = self.database.get_session_user(token)
+            if not row:
+                return None
+            now = time.time()
+            self.database.touch_session(token, now, now + SESSION_TTL_SECONDS)
+            user = UserAccount(
+                user_id=row["user_id"],
+                name=row["name"],
+                email=row["email"],
+                role=row["role"],
+                team=row["team"],
+                shift=row["shift"],
+                status=row["status"],
+                queue_level=row["queue_level"],
+                permissions=row["permissions"],
+            )
+            return self._to_auth_user(user)
         session = self.active_sessions.get(token)
         if not session:
             return None
@@ -406,6 +506,9 @@ class IDPSTuningEngine:
         return self._to_auth_user(user)
 
     def revoke_session(self, token: str) -> None:
+        if self.database.enabled:
+            self.database.revoke_session(token)
+            return
         if token in self.active_sessions:
             del self.active_sessions[token]
 
@@ -1204,21 +1307,40 @@ class IDPSTuningEngine:
             temporary_password=None,
         )
         self.user_roster[user.user_id] = user
+        password_updated_at = time.time()
+        password_hash = self._hash_password(temporary_password)
         self.auth_credentials[user.user_id] = {
-            "password_hash": self._hash_password(temporary_password),
+            "password_hash": password_hash,
             "failed_attempts": [],
             "locked_until": 0.0,
-            "password_updated_at": time.time(),
+            "password_updated_at": password_updated_at,
         }
+        if self.database.enabled:
+            self.database.insert_user(
+                {
+                    "user_id": user.user_id,
+                    "name": user.name,
+                    "email": user.email,
+                    "role": user.role,
+                    "team": user.team,
+                    "shift": user.shift,
+                    "status": user.status,
+                    "queue_level": user.queue_level,
+                    "permissions": user.permissions,
+                },
+                password_hash=password_hash,
+                password_updated_at=password_updated_at,
+            )
         return user.model_copy(update={"temporary_password": temporary_password})
 
     def get_soc_manager_overview(self) -> SocManagerOverview:
         self._ensure_seed_history()
 
-        active_users = [user for user in self.user_roster.values() if user.status in {"Active", "On duty", "Reviewing"}]
+        users = self._get_all_users()
+        active_users = [user for user in users if user.status in {"Active", "On duty", "Reviewing"}]
         performance: List[AnalystPerformance] = []
 
-        for user in self.user_roster.values():
+        for user in users:
             assigned_alerts = [alert for alert in self.alert_history if alert.assigned_analyst == user.name]
             investigating_alerts = [alert for alert in assigned_alerts if alert.status == "investigating"]
             escalated_alerts = [alert for alert in assigned_alerts if alert.status == "escalated"]
@@ -1268,7 +1390,7 @@ class IDPSTuningEngine:
         escalated_alerts = len([alert for alert in self.alert_history if alert.status == "escalated"])
 
         return SocManagerOverview(
-            total_users=len(self.user_roster),
+            total_users=len(users),
             active_users=len(active_users),
             open_alerts=open_alerts,
             escalated_alerts=escalated_alerts,
@@ -1276,7 +1398,7 @@ class IDPSTuningEngine:
             average_mtta_seconds=average_mtta,
             average_mttd_seconds=average_mttd,
             average_mttr_seconds=average_mttr,
-            users=list(self.user_roster.values()),
+            users=users,
             performance=performance,
         )
 
