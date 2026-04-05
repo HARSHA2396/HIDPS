@@ -8,6 +8,7 @@ from collections import Counter, deque
 from statistics import mean
 from typing import Any, Dict, List, Optional
 
+from config import get_database_url
 from db import DatabaseStore
 from model_adapter import build_model_adapter
 from schemas import (
@@ -227,7 +228,7 @@ class IDPSTuningEngine:
         self.user_roster: Dict[str, UserAccount] = self._seed_user_roster()
         self.auth_credentials: Dict[str, Dict[str, Any]] = self._seed_auth_credentials()
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
-        self.database = DatabaseStore(os.getenv("DATABASE_URL", ""))
+        self.database = DatabaseStore(get_database_url())
         self.model_adapter = build_model_adapter()
         self.telemetry_state: Dict[str, Dict[str, Any]] = {
             source_id: {

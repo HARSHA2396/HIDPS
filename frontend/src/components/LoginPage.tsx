@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LockKeyhole, Radar, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { API_BASE_URL, WS_BASE_URL } from '../lib/api';
 import type { LoginRequest } from '../types';
 
 interface LoginPageProps {
@@ -65,6 +66,16 @@ export function LoginPage({ onLogin, isSubmitting, errorMessage }: LoginPageProp
           <p className="mt-2 text-sm text-slate-400">
             Use email or analyst ID and your assigned password.
           </p>
+
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Runtime Endpoints
+            </p>
+            <p className="mt-3 text-xs text-slate-500">REST API</p>
+            <p className="mt-1 break-all font-mono text-xs text-slate-300">{API_BASE_URL}</p>
+            <p className="mt-3 text-xs text-slate-500">WebSocket</p>
+            <p className="mt-1 break-all font-mono text-xs text-slate-300">{WS_BASE_URL}</p>
+          </div>
 
           <form
             className="mt-8 space-y-4"

@@ -50,6 +50,8 @@ Backend environment variables:
 - `RELOAD`
 - `ALLOWED_ORIGINS`
 - `DATABASE_URL`
+- `NETLIFY_DATABASE_URL_UNPOOLED`
+- `NETLIFY_DATABASE_URL`
 
 Example values are available in `backend/.env.example`.
 
@@ -57,10 +59,30 @@ Example values are available in `backend/.env.example`.
 
 This project now supports PostgreSQL-backed authentication and user storage.
 
-Use your hosted Neon connection string as `DATABASE_URL` on the backend host:
+Use your hosted Neon or Netlify DB connection string on the backend host.
+
+Recommended priority for this project:
+
+1. `DATABASE_URL`
+2. `NETLIFY_DATABASE_URL_UNPOOLED`
+3. `NETLIFY_DATABASE_URL`
+
+Example:
 
 ```env
 DATABASE_URL=postgresql://username:password@host/database?sslmode=require
+```
+
+If you are reusing the database created by Netlify DB, you can set either:
+
+```env
+NETLIFY_DATABASE_URL_UNPOOLED=postgresql://username:password@host/database?sslmode=require
+```
+
+or:
+
+```env
+NETLIFY_DATABASE_URL=postgresql://username:password@host/database?sslmode=require
 ```
 
 What is stored in PostgreSQL:
@@ -79,7 +101,7 @@ What still remains in app memory:
 Important:
 
 - do not commit the real Neon connection string into Git
-- set `DATABASE_URL` only in your backend hosting provider's environment variables
+- set the connection string only in your backend hosting provider's environment variables
 - set `ALLOWED_ORIGINS` to your Netlify domain, for example:
 
 ```env
@@ -87,6 +109,19 @@ ALLOWED_ORIGINS=https://soc-dashbaord.netlify.app
 ```
 
 On startup, the backend auto-creates the auth tables and seeds the default users if the database is empty.
+
+You can confirm production wiring by opening the backend health endpoint:
+
+```text
+GET /api/health
+```
+
+The response now includes:
+
+- `storage`
+- `database_configured`
+- `database_env_source`
+- `allowed_origins`
 
 ## Using your `.pth` model with ONNX
 
@@ -304,7 +339,7 @@ If authentication is failing on a Netlify-hosted frontend, the usual cause is on
 - the FastAPI backend is not deployed separately
 - `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` are missing in Netlify
 - `ALLOWED_ORIGINS` on the backend does not include the Netlify site
-- `DATABASE_URL` is missing on the backend, so you are not using the hosted database
+- no database connection string is set on the backend, so you are not using the hosted database
 
 Recommended Netlify deployment flow:
 
@@ -328,8 +363,19 @@ Recommended deployment flow:
 4. Set these required environment variables in Render:
 
 ```env
-DATABASE_URL=postgresql://username:password@host/database?sslmode=require
 ALLOWED_ORIGINS=https://soc-dashbaord.netlify.app
+```
+
+Add one database variable in Render:
+
+```env
+DATABASE_URL=postgresql://username:password@host/database?sslmode=require
+```
+
+or reuse your existing Netlify DB variables directly:
+
+```env
+NETLIFY_DATABASE_URL_UNPOOLED=postgresql://username:password@host/database?sslmode=require
 ```
 
 Render service details:

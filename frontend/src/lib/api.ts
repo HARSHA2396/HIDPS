@@ -3,8 +3,15 @@ import type { AuthSession } from '../types';
 const locationHost = globalThis.location?.hostname || 'localhost';
 const pageProtocol = globalThis.location?.protocol || 'http:';
 const socketProtocol = pageProtocol === 'https:' ? 'wss:' : 'ws:';
+const isLocalHostname =
+  locationHost === 'localhost' ||
+  locationHost === '127.0.0.1' ||
+  locationHost === '0.0.0.0' ||
+  locationHost.endsWith('.local');
 export const AUTH_STORAGE_KEY = 'nexus-soc-auth-session';
 export const AUTH_EXPIRED_EVENT = 'nexus-soc-auth-expired';
+export const HAS_EXPLICIT_API_BASE_URL = Boolean(import.meta.env.VITE_API_BASE_URL);
+export const HAS_EXPLICIT_WS_BASE_URL = Boolean(import.meta.env.VITE_WS_BASE_URL);
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || `${pageProtocol}//${locationHost}:8000`;
@@ -14,6 +21,14 @@ export const WS_BASE_URL =
 
 export function apiUrl(path: string) {
   return `${API_BASE_URL}${path}`;
+}
+
+export function getEndpointConfigurationIssue() {
+  if (isLocalHostname || (HAS_EXPLICIT_API_BASE_URL && HAS_EXPLICIT_WS_BASE_URL)) {
+    return '';
+  }
+
+  return 'Production endpoint variables are missing. Deploy the FastAPI backend separately, then set VITE_API_BASE_URL and VITE_WS_BASE_URL in Netlify.';
 }
 
 export function getStoredAuthSession(): AuthSession | null {

@@ -6,6 +6,7 @@ from typing import Callable, List
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import get_allowed_origins, get_database_env_source
 from engine import engine
 from schemas import (
     ActionApprovalRequest,
@@ -33,14 +34,6 @@ from schemas import (
     UserAccount,
     WorkflowUpdateRequest,
 )
-
-
-def get_allowed_origins():
-    raw_origins = os.getenv("ALLOWED_ORIGINS", "*").strip()
-    if raw_origins == "*":
-        return ["*"]
-    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-
 
 def get_bearer_token(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -125,6 +118,7 @@ async def start_background_jobs():
 
 @app.get("/api/health")
 async def health_check():
+    database_env_source = get_database_env_source()
     return {
         "status": "ok",
         "simulation_active": broadcaster.simulation_active,
@@ -132,6 +126,9 @@ async def health_check():
         "generated_alerts": len(engine.alert_history),
         "pending_approvals": len(engine.pending_actions),
         "storage": engine.storage_status(),
+        "database_configured": engine.database.enabled,
+        "database_env_source": database_env_source,
+        "allowed_origins": get_allowed_origins(),
     }
 
 

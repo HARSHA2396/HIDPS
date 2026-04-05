@@ -16,6 +16,7 @@ import {
   apiUrl,
   AUTH_EXPIRED_EVENT,
   clearStoredAuthSession,
+  getEndpointConfigurationIssue,
   getStoredAuthSession,
   setStoredAuthSession,
   wsUrl,
@@ -41,6 +42,7 @@ import type {
 } from './types';
 
 export default function App() {
+  const endpointConfigurationIssue = getEndpointConfigurationIssue();
   const [alerts, setAlerts] = useState<AlertData[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<AlertData | null>(null);
   const [simulationActive, setSimulationActive] = useState(true);
@@ -271,7 +273,10 @@ export default function App() {
       setSelectedAlert(null);
       setConnectionState('connecting');
     } catch {
-      setLoginError('Could not reach the authentication service.');
+      setLoginError(
+        endpointConfigurationIssue ||
+          `Could not reach the authentication service at ${apiUrl('/api/auth/login')}.`,
+      );
     } finally {
       setLoginPending(false);
       setAuthReady(true);
@@ -334,7 +339,7 @@ export default function App() {
       <LoginPage
         onLogin={handleLogin}
         isSubmitting={loginPending}
-        errorMessage={loginError}
+        errorMessage={loginError || endpointConfigurationIssue}
       />
     );
   }
