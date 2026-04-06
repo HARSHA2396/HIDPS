@@ -357,6 +357,22 @@ export interface ModelStatus {
   auto_response_enabled: boolean;
 }
 
+export interface MonitoredEventResponse {
+  status: string;
+  page_url?: string | null;
+  request_path?: string | null;
+  attack_type: string;
+  confidence: number;
+  threat_score: number;
+  severity: AlertSeverity;
+  should_alert: boolean;
+  recommended_action?: string | null;
+  prevention_status: string;
+  prevention_message?: string | null;
+  alert_id?: string | null;
+  alert?: AlertData | null;
+}
+
 export interface AlertSocketMessage {
   type: 'NEW_ALERT';
   data: AlertData;
@@ -370,7 +386,8 @@ export type AppView =
   | 'analytics'
   | 'logs-forensics'
   | 'access-control'
-  | 'settings';
+  | 'settings'
+  | 'demo-lab';
 
 export type ConnectionState = 'connecting' | 'online' | 'offline';
 export type SimulationCommand = 'START_SIMULATION' | 'STOP_SIMULATION' | 'NORMAL_TRAFFIC';

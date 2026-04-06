@@ -93,7 +93,7 @@ export const NAV_ITEMS: NavigationItem[] = [
 const VIEW_SET = new Set<AppView>(NAV_ITEMS.map((item) => item.view));
 
 export function isAppView(value: string): value is AppView {
-  return VIEW_SET.has(value as AppView);
+  return VIEW_SET.has(value as AppView) || value === 'demo-lab';
 }
 
 export function parseViewHash(hash: string): AppView {
@@ -117,6 +117,9 @@ export function getNavigationItemsForUser(user: AuthUser | null) {
 }
 
 export function canAccessView(view: AppView, user: AuthUser | null) {
+  if (view === 'demo-lab') {
+    return true;
+  }
   const item = getViewMeta(view);
   if (!user) {
     return false;

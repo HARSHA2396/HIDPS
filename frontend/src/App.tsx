@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AccessControlPage } from './components/AccessControlPage';
 import { AlertsPage } from './components/AlertsPage';
 import { DashboardPage } from './components/DashboardPage';
+import { DemoLabPage } from './components/DemoLabPage';
 import { EdgeNodesPage } from './components/EdgeNodesPage';
 import { FullAnalyticsPage } from './components/FullAnalyticsPage';
 import { LoginPage } from './components/LoginPage';
@@ -142,7 +143,7 @@ export default function App() {
   }, [activeView]);
 
   useEffect(() => {
-    if (!authSession || canAccessView(activeView, authSession.user)) {
+    if (activeView === 'demo-lab' || !authSession || canAccessView(activeView, authSession.user)) {
       return;
     }
     setActiveView('dashboard');
@@ -369,11 +370,18 @@ export default function App() {
   };
 
   if (!authReady) {
+    if (activeView === 'demo-lab') {
+      return <DemoLabPage authenticated={Boolean(authSession)} />;
+    }
     return (
       <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#07101b_0%,#0a1220_48%,#09111d_100%)] text-slate-300">
         Validating secure session...
       </div>
     );
+  }
+
+  if (activeView === 'demo-lab') {
+    return <DemoLabPage authenticated={Boolean(authSession)} />;
   }
 
   if (!authSession) {

@@ -66,6 +66,15 @@ export function LoginPage({ onLogin, isSubmitting, errorMessage }: LoginPageProp
           <p className="mt-2 text-sm text-slate-400">
             Use email or analyst ID and your assigned password.
           </p>
+          <button
+            type="button"
+            onClick={() => {
+              globalThis.location.hash = '#/demo-lab';
+            }}
+            className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/18"
+          >
+            Open Live Demo Webpage
+          </button>
 
           <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
