@@ -49,7 +49,7 @@ def main():
         default="",
         help="Optional checkpoint key containing the state_dict, for example model_state_dict.",
     )
-    parser.add_argument("--opset", type=int, default=17)
+    parser.add_argument("--opset", type=int, default=18)
     args = parser.parse_args()
 
     checkpoint_path = Path(args.checkpoint)

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from config import get_database_url
 from db import DatabaseStore
 from model_adapter import build_model_adapter
+from model_presets import parse_float, resolve_attack_type_from_model_label
 from schemas import (
     ActionApprovalRequest,
     ActionRequest,
@@ -560,6 +561,62 @@ class IDPSTuningEngine:
             return "QUARANTINE"
         return "IP BLOCK"
 
+    def _heuristic_attack_assessment(self, features: Dict[str, Any]) -> tuple[str, float]:
+        for hint_key in ("threat_hint", "expected_attack_type", "dataset_label"):
+            raw_hint = str(features.get(hint_key, "") or "").strip()
+            if raw_hint:
+                hinted_attack = resolve_attack_type_from_model_label(raw_hint, features)
+                if hinted_attack != "Normal":
+                    return hinted_attack, 0.88
+
+        lowered_path = str(features.get("request_path", "") or "").lower()
+        lowered_url = str(features.get("page_url", "") or "").lower()
+        failed_logins = parse_float(features.get("failed_logins"))
+        packet_rate = max(parse_float(features.get("packet_rate")), parse_float(features.get("flow_packets_per_s")))
+        payload_kb = parse_float(features.get("payload_kb"))
+        destination_port = parse_float(features.get("destination_port"))
+        total_backward_packets = parse_float(features.get("total_backward_packets"))
+        total_length_bwd_packets = parse_float(features.get("total_length_bwd_packets"))
+        source_type = str(features.get("source_type", "") or "").lower()
+
+        suspicious_tokens = ["../", "<script", "union", "select ", "drop table", "or 1=1", "cmd="]
+        if any(token in lowered_path or token in lowered_url for token in suspicious_tokens):
+            return "Web Attack", 0.86
+        if failed_logins >= 5:
+            return "Brute Force", min(0.95, 0.52 + failed_logins / 20)
+        if packet_rate >= 4000:
+            return "DoS", 0.91
+        if destination_port in {21.0, 22.0, 23.0, 25.0, 53.0, 80.0, 443.0, 3389.0} and total_backward_packets <= 1:
+            return "Port Scan", 0.74
+        if payload_kb >= 24 or total_length_bwd_packets >= 500000:
+            return "Infiltration", 0.73
+        if source_type == "web-access" and any(token in lowered_path for token in ["/login", "/admin", "/api"]):
+            return "Web Attack", 0.61
+        return "Normal", 0.18
+
+    def _resolve_auto_attack(self, features: Dict[str, Any]) -> tuple[str, float]:
+        heuristic_attack_type, heuristic_confidence = self._heuristic_attack_assessment(features)
+        prediction = self.model_adapter.predict(features)
+        if not prediction:
+            return heuristic_attack_type, heuristic_confidence
+
+        raw_attack_type = str(prediction["attack_type"])
+        model_attack_type = resolve_attack_type_from_model_label(raw_attack_type, features)
+        model_confidence = float(prediction["confidence"])
+        features.setdefault("model_raw_label", raw_attack_type)
+        features.setdefault("model_runtime", prediction["runtime"])
+        features.setdefault("model_confidence", model_confidence)
+
+        if model_attack_type == "Normal" and heuristic_attack_type != "Normal":
+            return heuristic_attack_type, heuristic_confidence
+        if model_attack_type == "Intrusion":
+            if heuristic_attack_type != "Normal":
+                return heuristic_attack_type, max(model_confidence, heuristic_confidence)
+            return "Infiltration", model_confidence
+        if heuristic_attack_type == model_attack_type and heuristic_attack_type != "Normal":
+            return model_attack_type, max(model_confidence, heuristic_confidence)
+        return model_attack_type, model_confidence
+
     def get_model_status(self) -> ModelStatusResponse:
         adapter_status = self.model_adapter.status()
         return ModelStatusResponse(
@@ -927,13 +984,8 @@ class IDPSTuningEngine:
     def hook_real_network_inference(self, live_packet_features: Dict[str, Any]) -> AlertModel:
         attack_type = str(live_packet_features.get("attack_type", "AUTO"))
         if attack_type.upper() == "AUTO":
-            prediction = self.model_adapter.predict(live_packet_features)
-            if prediction:
-                attack_type = str(prediction["attack_type"])
-                live_packet_features.setdefault("confidence", prediction["confidence"])
-                live_packet_features.setdefault("model_runtime", prediction["runtime"])
-            else:
-                attack_type = "Normal"
+            attack_type, confidence = self._resolve_auto_attack(live_packet_features)
+            live_packet_features.setdefault("confidence", confidence)
         normalized_source_ip = str(live_packet_features.get("source_ip", random.choice(ATTACKER_IPS)))
         alert = self._build_alert(attack_type=attack_type, source_ip=normalized_source_ip)
         source_type = str(live_packet_features.get("source_type", alert.source_type))
@@ -1022,31 +1074,7 @@ class IDPSTuningEngine:
         attack_type = request.attack_type
         confidence = 0.12
         if attack_type.upper() == "AUTO":
-            prediction = self.model_adapter.predict(flattened_features)
-            if prediction:
-                attack_type = str(prediction["attack_type"])
-                confidence = float(prediction["confidence"])
-                flattened_features["model_runtime"] = prediction["runtime"]
-            else:
-                lowered_path = request_path.lower()
-                failed_logins = float(flattened_features.get("failed_logins", 0) or 0)
-                packet_rate = float(flattened_features.get("packet_rate", 0) or 0)
-                payload_kb = float(flattened_features.get("payload_kb", 0) or 0)
-                if any(token in lowered_path for token in ["../", "<script", "union", "select "]):
-                    attack_type = "Web Attack"
-                    confidence = 0.86
-                elif failed_logins >= 5:
-                    attack_type = "Brute Force"
-                    confidence = min(0.95, 0.52 + failed_logins / 20)
-                elif packet_rate >= 4000:
-                    attack_type = "DoS"
-                    confidence = 0.91
-                elif payload_kb >= 24:
-                    attack_type = "Infiltration"
-                    confidence = 0.73
-                else:
-                    attack_type = "Normal"
-                    confidence = 0.18
+            attack_type, confidence = self._resolve_auto_attack(flattened_features)
         else:
             confidence = max(0.0, min(1.0, float(flattened_features.get("confidence", 0.92))))
 

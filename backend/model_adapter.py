@@ -1,6 +1,14 @@
 import math
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from model_presets import (
+    HARDENED_IDS_FEATURE_ORDER,
+    HARDENED_IDS_LABELS,
+    default_hardened_ids_model_path,
+    normalize_feature_map,
+)
 
 
 class BaseModelAdapter:
@@ -33,10 +41,17 @@ class OnnxModelAdapter(BaseModelAdapter):
         self.model_path = ""
 
         model_path = os.getenv("ONNX_MODEL_PATH", "").strip()
+        if not model_path:
+            bundled_model = default_hardened_ids_model_path()
+            if bundled_model.exists():
+                model_path = str(bundled_model)
+
         feature_order = [
             item.strip() for item in os.getenv("MODEL_FEATURE_ORDER", "").split(",") if item.strip()
-        ]
-        labels = [item.strip() for item in os.getenv("MODEL_LABELS", "").split(",") if item.strip()]
+        ] or list(HARDENED_IDS_FEATURE_ORDER)
+        labels = [item.strip() for item in os.getenv("MODEL_LABELS", "").split(",") if item.strip()] or list(
+            HARDENED_IDS_LABELS
+        )
 
         if not model_path or not feature_order:
             self.error = "Missing ONNX_MODEL_PATH or MODEL_FEATURE_ORDER."
@@ -53,7 +68,7 @@ class OnnxModelAdapter(BaseModelAdapter):
         self.ort = ort
         self.feature_order = feature_order
         self.labels = labels
-        self.model_path = model_path
+        self.model_path = str(Path(model_path).resolve())
 
         try:
             self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
@@ -77,7 +92,8 @@ class OnnxModelAdapter(BaseModelAdapter):
         if not self.enabled or self.session is None:
             return None
 
-        vector = [[float(features.get(name, 0.0)) for name in self.feature_order]]
+        normalized_features = normalize_feature_map(features)
+        vector = [[float(normalized_features.get(name, 0.0)) for name in self.feature_order]]
         input_tensor = self.np.asarray(vector, dtype=self.np.float32)
         outputs = self.session.run(None, {self.input_name: input_tensor})
         if not outputs:

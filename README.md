@@ -150,6 +150,18 @@ Use `--factory module_name:callable_name` to point the exporter to your real mod
 
 If your checkpoint wraps the weights, add `--state-dict-key state_dict` or the matching key name.
 
+This repo now also includes a concrete exporter for your `hardened_ids_vfinal.pth` checkpoint:
+
+```bash
+python backend/examples/export_hardened_ids_to_onnx.py
+```
+
+That command writes the deployable model to:
+
+```text
+backend/models/hardened_ids_vfinal.onnx
+```
+
 ### 2. Enable ONNX inference in this backend
 
 Optional runtime adapter:
@@ -161,13 +173,15 @@ Set these environment variables:
 
 ```env
 MODEL_RUNTIME=onnx
-ONNX_MODEL_PATH=D:\models\idps_model.onnx
-MODEL_FEATURE_ORDER=packet_rate,avg_packet_size,duration,entropy,connection_rate,failed_logins,payload_kb
-MODEL_LABELS=Normal,DoS,Brute Force,Web Attack,Infiltration,Port Scan
+ONNX_MODEL_PATH=
+MODEL_FEATURE_ORDER=destination_port,flow_duration,total_fwd_packets,total_backward_packets,total_length_fwd_packets,total_length_bwd_packets,fwd_packet_length_max,bwd_packet_length_mean,flow_bytes_per_s,flow_packets_per_s,packet_length_mean,avg_packet_size,subflow_fwd_packets
+MODEL_LABELS=Normal,Intrusion
 MODEL_ALERT_THRESHOLD=0.55
 MODEL_PREVENT_THRESHOLD=0.85
 MODEL_AUTO_RESPONSE=false
 ```
+
+If `ONNX_MODEL_PATH` is left blank and `backend/models/hardened_ids_vfinal.onnx` exists, the backend will load that bundled model automatically.
 
 When `MODEL_RUNTIME=onnx` is enabled, the backend can infer the attack type automatically if you send:
 
@@ -190,7 +204,7 @@ When `MODEL_RUNTIME=onnx` is enabled, the backend can infer the attack type auto
 }
 ```
 
-The integration point is the live inference hook in [backend/engine.py](/D:/IDPSProject/backend/engine.py), where `attack_type: "AUTO"` will try the ONNX adapter first.
+The integration point is the live inference hook in [backend/engine.py](/D:/IDPSProject/backend/engine.py), where `attack_type: "AUTO"` will try the ONNX adapter first and then blend in request-context heuristics so the dashboard still produces understandable alert categories for demos.
 
 You can verify the runtime from the backend with:
 
@@ -237,6 +251,20 @@ This webapp does not run the model in the browser. The integration is:
 - backend runs ONNX inference or uses the provided `attack_type`
 - backend creates an alert
 - frontend receives the alert over WebSocket and renders it in the SOC dashboard
+
+For CICIDS replay demos, you can send a real dataset row straight into the monitored-event endpoint:
+
+```bash
+python backend/examples/send_cicids_event.py --api http://localhost:8000 --label-contains "Web Attack"
+```
+
+That helper extracts the 13-feature vector, adds a `threat_hint` derived from the dataset label, and lets the backend turn it into a dashboard alert.
+
+Note:
+
+- the bundled ONNX model is deployed and scored by the backend
+- the original training-time scaler / feature-selection metadata was not present with the checkpoint
+- for labeled dataset replays, `threat_hint` keeps the dashboard category aligned with the row label while the ONNX runtime still contributes live model metadata and confidence
 
 That means your real model should connect to the backend, not directly to the React frontend.
 

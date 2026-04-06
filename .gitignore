@@ -31,3 +31,7 @@ frontend/vite-dev.log
 
 # Large local-only assets
 datasets/
+*.pth
+*.pt
+*.onnx.data
+!backend/models/*.onnx
