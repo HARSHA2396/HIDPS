@@ -140,13 +140,15 @@ Install the optional ML packages first:
 pip install torch onnx onnxruntime numpy
 ```
 
-Template script:
+Generic export script:
 
 ```bash
-python backend/examples/export_pth_to_onnx.py --checkpoint path\to\model.pth --output path\to\model.onnx --input-size 16
+python backend/examples/export_pth_to_onnx.py --checkpoint path\to\model.pth --output path\to\model.onnx --factory my_model:create_model --input-shape 1,16
 ```
 
-You must edit [backend/examples/export_pth_to_onnx.py](/D:/IDPSProject/backend/examples/export_pth_to_onnx.py) and replace `load_model()` with your actual model class and checkpoint loading logic.
+Use `--factory module_name:callable_name` to point the exporter to your real model builder.
+
+If your checkpoint wraps the weights, add `--state-dict-key state_dict` or the matching key name.
 
 ### 2. Enable ONNX inference in this backend
 
@@ -162,6 +164,9 @@ MODEL_RUNTIME=onnx
 ONNX_MODEL_PATH=D:\models\idps_model.onnx
 MODEL_FEATURE_ORDER=packet_rate,avg_packet_size,duration,entropy,connection_rate,failed_logins,payload_kb
 MODEL_LABELS=Normal,DoS,Brute Force,Web Attack,Infiltration,Port Scan
+MODEL_ALERT_THRESHOLD=0.55
+MODEL_PREVENT_THRESHOLD=0.85
+MODEL_AUTO_RESPONSE=false
 ```
 
 When `MODEL_RUNTIME=onnx` is enabled, the backend can infer the attack type automatically if you send:
@@ -186,6 +191,20 @@ When `MODEL_RUNTIME=onnx` is enabled, the backend can infer the attack type auto
 ```
 
 The integration point is the live inference hook in [backend/engine.py](/D:/IDPSProject/backend/engine.py), where `attack_type: "AUTO"` will try the ONNX adapter first.
+
+You can verify the runtime from the backend with:
+
+```text
+GET /api/model/status
+```
+
+The response includes:
+
+- runtime mode
+- whether the ONNX model loaded successfully
+- feature order
+- labels
+- alert and prevention thresholds
 
 ### 3. Deploy the model in cloud
 
@@ -214,11 +233,53 @@ This webapp does not run the model in the browser. The integration is:
 
 - website logs or network sensors generate features
 - backend receives the features through `/api/ingest/features`
+- monitored webpages can also send scored events through `/api/model/evaluate`
 - backend runs ONNX inference or uses the provided `attack_type`
 - backend creates an alert
 - frontend receives the alert over WebSocket and renders it in the SOC dashboard
 
 That means your real model should connect to the backend, not directly to the React frontend.
+
+### 5. Demo page monitoring and threat-score prevention
+
+For a monitored webpage or demo endpoint, call:
+
+```text
+POST /api/model/evaluate
+```
+
+This endpoint will:
+
+- score the event with ONNX when `MODEL_RUNTIME=onnx`
+- fall back to heuristic web-risk scoring if the model is disabled
+- compute a threat score
+- create a live dashboard alert when the score crosses `MODEL_ALERT_THRESHOLD`
+- recommend or trigger a prevention action when the score crosses `MODEL_PREVENT_THRESHOLD`
+
+Example payload:
+
+```json
+{
+  "page_url": "https://demo.yourapp.com/login",
+  "request_path": "/login",
+  "http_method": "POST",
+  "source_ip": "203.0.113.25",
+  "asset_name": "checkout-web",
+  "auto_prevent": true,
+  "features": {
+    "failed_logins": 12,
+    "packet_rate": 1800,
+    "payload_kb": 4.6,
+    "entropy": 3.9
+  }
+}
+```
+
+Helper script:
+
+```bash
+python backend/examples/send_monitored_web_event.py --endpoint https://hidps.onrender.com --page-url https://demo.yourapp.com/login --request-path /login --http-method POST --feature failed_logins=12 --feature packet_rate=1800 --feature payload_kb=4.6 --auto-prevent
+```
 
 ## Analyst login
 

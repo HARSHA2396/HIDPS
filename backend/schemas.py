@@ -325,6 +325,53 @@ class IngestResponse(BaseModel):
     alert: AlertModel
 
 
+class ModelStatusResponse(BaseModel):
+    runtime: str
+    enabled: bool
+    error: Optional[str] = None
+    feature_order: List[str] = Field(default_factory=list)
+    labels: List[str] = Field(default_factory=list)
+    input_name: Optional[str] = None
+    output_names: List[str] = Field(default_factory=list)
+    model_path: Optional[str] = None
+    alert_threshold: float
+    prevent_threshold: float
+    auto_response_enabled: bool
+
+
+class MonitoredEventRequest(BaseModel):
+    page_url: Optional[str] = None
+    request_path: Optional[str] = None
+    http_method: Optional[str] = None
+    source_ip: Optional[str] = None
+    dest_ip: Optional[str] = None
+    source_type: str = Field(default="web-access")
+    telemetry_source: str = Field(default="web-monitor")
+    asset_name: Optional[str] = None
+    edge_node_id: Optional[str] = None
+    attack_type: str = Field(default="AUTO")
+    requested_by: str = Field(default="web-monitor")
+    auto_prevent: bool = False
+    timestamp: Optional[float] = None
+    features: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MonitoredEventResponse(BaseModel):
+    status: str
+    page_url: Optional[str] = None
+    request_path: Optional[str] = None
+    attack_type: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    threat_score: float = Field(ge=0.0, le=1.0)
+    severity: str
+    should_alert: bool
+    recommended_action: Optional[str] = None
+    prevention_status: str
+    prevention_message: Optional[str] = None
+    alert_id: Optional[str] = None
+    alert: Optional[AlertModel] = None
+
+
 class UserAccount(BaseModel):
     user_id: str
     name: str

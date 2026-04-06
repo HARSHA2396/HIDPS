@@ -27,6 +27,9 @@ from schemas import (
     IngestFeatureRequest,
     IngestResponse,
     InvestigationWorkspace,
+    ModelStatusResponse,
+    MonitoredEventRequest,
+    MonitoredEventResponse,
     PendingAction,
     SocManagerOverview,
     TelemetrySourceStatus,
@@ -130,6 +133,11 @@ async def health_check():
         "database_env_source": database_env_source,
         "allowed_origins": get_allowed_origins(),
     }
+
+
+@app.get("/api/model/status", response_model=ModelStatusResponse)
+async def fetch_model_status(current_user: AuthUser = Depends(require_auth)):
+    return engine.get_model_status()
 
 
 @app.post("/api/auth/login", response_model=LoginResponse)
@@ -269,6 +277,14 @@ async def ingest_feature_event(req: IngestFeatureRequest):
         alert_id=alert.id,
         alert=alert,
     )
+
+
+@app.post("/api/model/evaluate", response_model=MonitoredEventResponse)
+async def evaluate_monitored_event(req: MonitoredEventRequest):
+    decision = engine.evaluate_monitored_event(req)
+    if decision.alert:
+        await broadcaster.broadcast({"type": "NEW_ALERT", "data": decision.alert.model_dump()})
+    return decision
 
 
 @app.post("/api/alerts/workflow", response_model=AlertModel)

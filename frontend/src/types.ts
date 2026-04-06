@@ -343,6 +343,20 @@ export interface CloudIntel {
   zero_trust_fusion?: string;
 }
 
+export interface ModelStatus {
+  runtime: string;
+  enabled: boolean;
+  error?: string | null;
+  feature_order: string[];
+  labels: string[];
+  input_name?: string | null;
+  output_names: string[];
+  model_path?: string | null;
+  alert_threshold: number;
+  prevent_threshold: number;
+  auto_response_enabled: boolean;
+}
+
 export interface AlertSocketMessage {
   type: 'NEW_ALERT';
   data: AlertData;

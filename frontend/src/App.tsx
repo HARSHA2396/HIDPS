@@ -328,7 +328,7 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-300">
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#07101b_0%,#0a1220_48%,#09111d_100%)] text-slate-300">
         Validating secure session...
       </div>
     );
@@ -390,7 +390,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-900 font-sans text-slate-200">
+    <div className="flex h-screen overflow-hidden bg-[linear-gradient(180deg,#07101b_0%,#0a1220_48%,#09111d_100%)] font-sans text-slate-200">
       <Sidebar activeView={activeView} onSelectView={setActiveView} items={navigationItems} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar

@@ -9,6 +9,15 @@ class BaseModelAdapter:
     def predict(self, features: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
+    def status(self) -> Dict[str, Any]:
+        return {
+            "runtime": self.runtime,
+            "enabled": False,
+            "error": "Model runtime disabled.",
+            "feature_order": [],
+            "labels": [],
+        }
+
 
 class OnnxModelAdapter(BaseModelAdapter):
     runtime = "onnx"
@@ -20,6 +29,8 @@ class OnnxModelAdapter(BaseModelAdapter):
         self.input_name = ""
         self.feature_order: List[str] = []
         self.labels: List[str] = []
+        self.output_names: List[str] = []
+        self.model_path = ""
 
         model_path = os.getenv("ONNX_MODEL_PATH", "").strip()
         feature_order = [
@@ -42,6 +53,7 @@ class OnnxModelAdapter(BaseModelAdapter):
         self.ort = ort
         self.feature_order = feature_order
         self.labels = labels
+        self.model_path = model_path
 
         try:
             self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
@@ -50,6 +62,7 @@ class OnnxModelAdapter(BaseModelAdapter):
             return
 
         self.input_name = self.session.get_inputs()[0].name
+        self.output_names = [item.name for item in self.session.get_outputs()]
         self.enabled = True
 
     def _softmax(self, values: List[float]) -> List[float]:
@@ -70,8 +83,18 @@ class OnnxModelAdapter(BaseModelAdapter):
         if not outputs:
             return None
 
-        raw_scores = outputs[0][0].tolist()
-        if raw_scores and all(0.0 <= float(value) <= 1.0 for value in raw_scores):
+        raw_output = outputs[0]
+        raw_scores = self.np.ravel(raw_output).astype(float).tolist()
+        if not raw_scores:
+            return None
+
+        if len(raw_scores) == 1:
+            score = max(0.0, min(1.0, float(raw_scores[0])))
+            if len(self.labels) >= 2:
+                probabilities = [round(1.0 - score, 4), round(score, 4)]
+            else:
+                probabilities = [round(score, 4)]
+        elif all(0.0 <= float(value) <= 1.0 for value in raw_scores):
             probabilities = [float(value) for value in raw_scores]
         else:
             probabilities = self._softmax([float(value) for value in raw_scores])
@@ -87,6 +110,18 @@ class OnnxModelAdapter(BaseModelAdapter):
             "confidence": round(float(probabilities[predicted_index]), 4),
             "runtime": self.runtime,
             "feature_order": self.feature_order,
+        }
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "runtime": self.runtime,
+            "enabled": self.enabled,
+            "error": self.error,
+            "feature_order": self.feature_order,
+            "labels": self.labels,
+            "input_name": self.input_name,
+            "output_names": self.output_names,
+            "model_path": self.model_path,
         }
 
 

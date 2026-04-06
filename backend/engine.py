@@ -34,7 +34,10 @@ from schemas import (
     IngestFeatureRequest,
     InvestigationPlaybook,
     InvestigationWorkspace,
+    ModelStatusResponse,
     MitreTechnique,
+    MonitoredEventRequest,
+    MonitoredEventResponse,
     PendingAction,
     PlaybookStep,
     SocManagerOverview,
@@ -527,6 +530,52 @@ class IDPSTuningEngine:
             return "High"
         return profile["severity"]
 
+    def _severity_for_score(self, threat_score: float) -> str:
+        if threat_score >= 0.9:
+            return "Critical"
+        if threat_score >= 0.74:
+            return "High"
+        if threat_score >= 0.48:
+            return "Medium"
+        return "Low"
+
+    def _model_alert_threshold(self) -> float:
+        return max(0.0, min(1.0, float(os.getenv("MODEL_ALERT_THRESHOLD", "0.55"))))
+
+    def _model_prevent_threshold(self) -> float:
+        return max(0.0, min(1.0, float(os.getenv("MODEL_PREVENT_THRESHOLD", "0.85"))))
+
+    def _model_auto_response_enabled(self) -> bool:
+        return os.getenv("MODEL_AUTO_RESPONSE", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _recommended_action_for_attack(self, attack_type: str, threat_score: float) -> Optional[str]:
+        normalized = attack_type.lower()
+        if attack_type == "Normal" or threat_score < self._model_alert_threshold():
+            return None
+        if "dos" in normalized:
+            return "THROTTLE"
+        if "brute" in normalized or "web attack" in normalized:
+            return "IP BLOCK"
+        if "infiltration" in normalized or "adversarial" in normalized or "zero-day" in normalized:
+            return "QUARANTINE"
+        return "IP BLOCK"
+
+    def get_model_status(self) -> ModelStatusResponse:
+        adapter_status = self.model_adapter.status()
+        return ModelStatusResponse(
+            runtime=str(adapter_status.get("runtime", "disabled")),
+            enabled=bool(adapter_status.get("enabled", False)),
+            error=adapter_status.get("error"),
+            feature_order=list(adapter_status.get("feature_order", [])),
+            labels=list(adapter_status.get("labels", [])),
+            input_name=adapter_status.get("input_name"),
+            output_names=list(adapter_status.get("output_names", [])),
+            model_path=adapter_status.get("model_path"),
+            alert_threshold=self._model_alert_threshold(),
+            prevent_threshold=self._model_prevent_threshold(),
+            auto_response_enabled=self._model_auto_response_enabled(),
+        )
+
     def _choose_attack_type(self) -> str:
         if random.random() < 0.30:
             return "Normal"
@@ -943,6 +992,116 @@ class IDPSTuningEngine:
 
         self._ensure_live_telemetry_source(telemetry_source, source_type)
         return self._register_alert(alert)
+
+    def evaluate_monitored_event(self, request: MonitoredEventRequest) -> MonitoredEventResponse:
+        flattened_features: Dict[str, Any] = dict(request.features)
+        request_path = request.request_path or str(flattened_features.get("request_path", "/"))
+        http_method = request.http_method or str(flattened_features.get("http_method", "GET"))
+        page_url = request.page_url or str(flattened_features.get("page_url", ""))
+        source_ip = request.source_ip or str(flattened_features.get("source_ip", random.choice(ATTACKER_IPS)))
+        asset_name = request.asset_name or "monitored-webapp"
+        flattened_features.update(
+            {
+                "request_path": request_path,
+                "http_method": http_method,
+                "page_url": page_url,
+                "source_ip": source_ip,
+                "source_type": request.source_type,
+                "telemetry_source": request.telemetry_source,
+                "asset_name": asset_name,
+            }
+        )
+        if request.dest_ip:
+            flattened_features["dest_ip"] = request.dest_ip
+        if request.edge_node_id:
+            flattened_features["edge_node_id"] = request.edge_node_id
+        if request.timestamp is not None:
+            flattened_features["timestamp"] = request.timestamp
+
+        prediction = None
+        attack_type = request.attack_type
+        confidence = 0.12
+        if attack_type.upper() == "AUTO":
+            prediction = self.model_adapter.predict(flattened_features)
+            if prediction:
+                attack_type = str(prediction["attack_type"])
+                confidence = float(prediction["confidence"])
+                flattened_features["model_runtime"] = prediction["runtime"]
+            else:
+                lowered_path = request_path.lower()
+                failed_logins = float(flattened_features.get("failed_logins", 0) or 0)
+                packet_rate = float(flattened_features.get("packet_rate", 0) or 0)
+                payload_kb = float(flattened_features.get("payload_kb", 0) or 0)
+                if any(token in lowered_path for token in ["../", "<script", "union", "select "]):
+                    attack_type = "Web Attack"
+                    confidence = 0.86
+                elif failed_logins >= 5:
+                    attack_type = "Brute Force"
+                    confidence = min(0.95, 0.52 + failed_logins / 20)
+                elif packet_rate >= 4000:
+                    attack_type = "DoS"
+                    confidence = 0.91
+                elif payload_kb >= 24:
+                    attack_type = "Infiltration"
+                    confidence = 0.73
+                else:
+                    attack_type = "Normal"
+                    confidence = 0.18
+        else:
+            confidence = max(0.0, min(1.0, float(flattened_features.get("confidence", 0.92))))
+
+        threat_score = round(max(0.0, min(1.0, confidence if attack_type != "Normal" else confidence * 0.35)), 4)
+        should_alert = attack_type != "Normal" and threat_score >= self._model_alert_threshold()
+        recommended_action = self._recommended_action_for_attack(attack_type, threat_score)
+        severity = self._severity_for_score(threat_score)
+        prevention_status = "not_triggered"
+        prevention_message = None
+        alert = None
+        alert_id = None
+
+        if should_alert:
+            flattened_features["attack_type"] = attack_type
+            flattened_features["confidence"] = confidence
+            flattened_features["correlation_score"] = max(
+                float(flattened_features.get("correlation_score", 0.0)),
+                round(min(0.99, threat_score), 3),
+            )
+            flattened_features["severity"] = severity
+            flattened_features["threat_score"] = threat_score
+            alert = self.hook_real_network_inference(flattened_features)
+            alert_id = alert.id
+
+        if recommended_action and threat_score >= self._model_prevent_threshold():
+            if request.auto_prevent or self._model_auto_response_enabled():
+                action_response = self.request_action(
+                    ActionRequest(
+                        action_type=recommended_action,
+                        target_ip=source_ip,
+                        alert_id=alert_id,
+                        requested_by=request.requested_by,
+                    )
+                )
+                prevention_status = action_response.status
+                prevention_message = action_response.msg
+            else:
+                prevention_status = "recommended"
+                prevention_message = f"{recommended_action} recommended at threat score {threat_score:.2f}."
+
+        return MonitoredEventResponse(
+            status="alert_created" if should_alert else "monitored",
+            page_url=page_url or None,
+            request_path=request_path or None,
+            attack_type=attack_type,
+            confidence=round(confidence, 4),
+            threat_score=threat_score,
+            severity=severity,
+            should_alert=should_alert,
+            recommended_action=recommended_action,
+            prevention_status=prevention_status,
+            prevention_message=prevention_message,
+            alert_id=alert_id,
+            alert=alert,
+        )
 
     def ingest_feature_event(self, request: IngestFeatureRequest) -> AlertModel:
         flattened_features: Dict[str, Any] = dict(request.features)
