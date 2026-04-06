@@ -60,6 +60,16 @@ export default function App() {
   const reconnectAttemptsRef = useRef(0);
   const simulationActiveRef = useRef(simulationActive);
 
+  const mergeAlerts = (existing: AlertData[], incoming: AlertData[]) => {
+    const byId = new Map(existing.map((alert) => [alert.id, alert]));
+    incoming.forEach((alert) => {
+      byId.set(alert.id, alert);
+    });
+    return Array.from(byId.values())
+      .sort((left, right) => right.timestamp - left.timestamp)
+      .slice(0, 120);
+  };
+
   useEffect(() => {
     simulationActiveRef.current = simulationActive;
   }, [simulationActive]);
@@ -140,6 +150,42 @@ export default function App() {
 
   useEffect(() => {
     if (!authSession) {
+      return;
+    }
+
+    let ignore = false;
+
+    const loadRecentAlerts = async () => {
+      try {
+        const response = await apiFetch('/api/alerts?limit=80');
+        if (!response.ok) {
+          throw new Error('Recent alerts unavailable.');
+        }
+        const recentAlerts = (await response.json()) as AlertData[];
+        if (ignore) {
+          return;
+        }
+        setAlerts((prev) => mergeAlerts(prev, recentAlerts));
+        setSelectedAlert((prev) => {
+          if (prev) {
+            return recentAlerts.find((alert) => alert.id === prev.id) ?? prev;
+          }
+          return recentAlerts[0] ?? null;
+        });
+      } catch {
+        // WebSocket bootstrap still provides a recent queue for live usage.
+      }
+    };
+
+    void loadRecentAlerts();
+
+    return () => {
+      ignore = true;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession) {
       socketRef.current?.close();
       socketRef.current = null;
       if (reconnectTimerRef.current !== null) {
@@ -152,9 +198,7 @@ export default function App() {
     let isMounted = true;
 
     const upsertIncomingAlert = (newAlert: AlertData) => {
-      setAlerts((prev) =>
-        [newAlert, ...prev.filter((alert) => alert.id !== newAlert.id)].slice(0, 120),
-      );
+      setAlerts((prev) => mergeAlerts(prev, [newAlert]));
       setSelectedAlert((prev) => (prev?.id === newAlert.id ? newAlert : prev ?? newAlert));
     };
 
@@ -320,9 +364,7 @@ export default function App() {
   };
 
   const syncAlertUpdate = (nextAlert: AlertData) => {
-    setAlerts((prev) =>
-      [nextAlert, ...prev.filter((alert) => alert.id !== nextAlert.id)].slice(0, 120),
-    );
+    setAlerts((prev) => mergeAlerts(prev, [nextAlert]));
     setSelectedAlert((prev) => (prev?.id === nextAlert.id ? nextAlert : prev));
   };
 

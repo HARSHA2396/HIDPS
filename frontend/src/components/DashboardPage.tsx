@@ -72,11 +72,15 @@ export function DashboardPage({ alerts }: DashboardPageProps) {
     };
 
     void loadOverview();
+    const intervalId = window.setInterval(() => {
+      void loadOverview();
+    }, 15_000);
 
     return () => {
       ignore = true;
+      window.clearInterval(intervalId);
     };
-  }, []);
+  }, [alerts.length]);
 
   const activeAlerts = alerts.filter((alert) => alert.status !== 'closed');
   const unassignedAlerts = activeAlerts.filter((alert) => !alert.assigned_analyst).length;

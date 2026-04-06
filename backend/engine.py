@@ -234,7 +234,10 @@ class IDPSTuningEngine:
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
         self.database = DatabaseStore(get_database_url())
         self.model_adapter = build_model_adapter()
-        self.telemetry_state: Dict[str, Dict[str, Any]] = {
+        self.telemetry_state: Dict[str, Dict[str, Any]] = self._build_initial_telemetry_state()
+
+    def _build_initial_telemetry_state(self) -> Dict[str, Dict[str, Any]]:
+        return {
             source_id: {
                 "records_seen": 0,
                 "last_seen": time.time() - random.uniform(10, 120),
@@ -243,6 +246,52 @@ class IDPSTuningEngine:
             }
             for source_id, blueprint in TELEMETRY_BLUEPRINTS.items()
         }
+
+    def _hydrate_workflow_state_from_database(self) -> None:
+        if not self.database.enabled:
+            return
+
+        self.alert_history = deque(
+            [AlertModel(**item) for item in self.database.list_alerts(limit=5000)],
+            maxlen=5000,
+        )
+        self.investigation_reports = {
+            alert_id: AnalysisReport(**payload)
+            for alert_id, payload in self.database.list_reports().items()
+        }
+        self.feedback_log = deque(
+            [FeedbackRecord(**payload) for payload in self.database.list_feedback(limit=200)],
+            maxlen=200,
+        )
+        self.pending_actions = {
+            action.action_id: action
+            for action in [
+                PendingAction(**payload)
+                for payload in self.database.list_actions(statuses=["pending_approval"], limit=500)
+            ]
+        }
+        self.mitigation_log = deque(
+            [
+                PendingAction(**payload)
+                for payload in self.database.list_actions(statuses=["executed"], limit=500)
+            ],
+            maxlen=500,
+        )
+        self.escalation_history = {
+            alert_id: [EscalationEvent(**payload) for payload in payloads]
+            for alert_id, payloads in self.database.list_escalations().items()
+        }
+        self._rebuild_telemetry_state_from_alerts()
+
+    def _rebuild_telemetry_state_from_alerts(self) -> None:
+        self.telemetry_state = self._build_initial_telemetry_state()
+        for alert in self.alert_history:
+            self._ensure_live_telemetry_source(alert.telemetry_source, alert.source_type)
+            source_state = self.telemetry_state[alert.telemetry_source]
+            source_state["records_seen"] += 1
+            source_state["last_seen"] = max(source_state["last_seen"], alert.timestamp)
+            if alert.severity in {"Critical", "High"}:
+                source_state["status"] = "Monitoring"
 
     def _seed_user_roster(self) -> Dict[str, UserAccount]:
         seeded_users = [
@@ -345,6 +394,7 @@ class IDPSTuningEngine:
             ],
             default_credentials=self.auth_credentials,
         )
+        self._hydrate_workflow_state_from_database()
 
     def storage_status(self) -> str:
         return "database" if self.database.enabled else "memory"
@@ -820,6 +870,9 @@ class IDPSTuningEngine:
         report = self.investigation_reports.setdefault(alert.id, self._build_default_report(alert))
         alert.report_excerpt = report.summary[:180]
         self.escalation_history.setdefault(alert.id, [])
+        if self.database.enabled:
+            self.database.upsert_alert(alert.model_dump())
+            self.database.upsert_report(alert.id, report.model_dump())
         source_state = self.telemetry_state.get(alert.telemetry_source)
         if source_state:
             source_state["records_seen"] += 1
@@ -828,6 +881,8 @@ class IDPSTuningEngine:
         return alert
 
     def _ensure_seed_history(self, minimum: int = 180) -> None:
+        if self.database.enabled and not self.alert_history and self.database.get_alert_count() > 0:
+            self._hydrate_workflow_state_from_database()
         while len(self.alert_history) < minimum:
             seeded_attack = random.choice(ATTACK_TYPES)
             self._register_alert(self._build_alert(attack_type=seeded_attack))
@@ -886,6 +941,8 @@ class IDPSTuningEngine:
             self.pending_actions[action_id] = pending_action
         else:
             self.mitigation_log.append(pending_action)
+        if self.database.enabled:
+            self.database.upsert_action(pending_action.model_dump())
         return pending_action
 
     def _build_playbook(self, alert: AlertModel) -> InvestigationPlaybook:
@@ -1409,6 +1466,11 @@ class IDPSTuningEngine:
             report.updated_at = feedback.timestamp
             alert.report_excerpt = report.summary[:180]
         self.feedback_log.appendleft(feedback)
+        if self.database.enabled:
+            self.database.insert_feedback(alert.id, feedback.model_dump())
+            self.database.upsert_alert(alert.model_dump())
+            if report:
+                self.database.upsert_report(alert.id, report.model_dump())
         return feedback
 
     def update_alert_workflow(self, request: WorkflowUpdateRequest) -> AlertModel:
@@ -1431,20 +1493,23 @@ class IDPSTuningEngine:
             alert.feedback = feedback
             self.feedback_log.appendleft(feedback)
             report.disposition = request.verdict
+            if self.database.enabled:
+                self.database.insert_feedback(alert.id, feedback.model_dump())
 
         if request.queue_level and request.queue_level != alert.queue_level:
             alert.queue_level = request.queue_level
             alert.assigned_team = f"SOC {request.queue_level}"
             alert.status = "escalated"
-            self.escalation_history.setdefault(alert.id, []).append(
-                EscalationEvent(
-                    from_queue=prior_queue,
-                    to_queue=request.queue_level,
-                    analyst=request.analyst,
-                    reason=request.escalation_reason or "Escalated for deeper analysis.",
-                    timestamp=time.time(),
-                )
+            escalation_event = EscalationEvent(
+                from_queue=prior_queue,
+                to_queue=request.queue_level,
+                analyst=request.analyst,
+                reason=request.escalation_reason or "Escalated for deeper analysis.",
+                timestamp=time.time(),
             )
+            self.escalation_history.setdefault(alert.id, []).append(escalation_event)
+            if self.database.enabled:
+                self.database.insert_escalation(alert.id, escalation_event.model_dump())
 
         if request.status:
             alert.status = request.status
@@ -1468,6 +1533,9 @@ class IDPSTuningEngine:
         report.updated_at = time.time()
         alert.report_excerpt = report.summary[:180]
         self.investigation_reports[alert.id] = report
+        if self.database.enabled:
+            self.database.upsert_alert(alert.model_dump())
+            self.database.upsert_report(alert.id, report.model_dump())
         return alert
 
     def add_user(self, request: CreateUserRequest) -> UserAccount:
@@ -1633,6 +1701,14 @@ class IDPSTuningEngine:
         )
 
     def get_pending_actions(self) -> List[PendingAction]:
+        if self.database.enabled and not self.pending_actions:
+            self.pending_actions = {
+                action.action_id: action
+                for action in [
+                    PendingAction(**payload)
+                    for payload in self.database.list_actions(statuses=["pending_approval"], limit=500)
+                ]
+            }
         return sorted(
             self.pending_actions.values(),
             key=lambda action: action.created_at,
@@ -1648,6 +1724,8 @@ class IDPSTuningEngine:
         action.executed_at = time.time()
         self.mitigation_log.appendleft(action)
         del self.pending_actions[request.action_id]
+        if self.database.enabled:
+            self.database.upsert_action(action.model_dump())
         return ActionResponse(
             status="success",
             msg=f"{action.action_type} approved by {request.analyst} and executed on {action.target_ip}",
