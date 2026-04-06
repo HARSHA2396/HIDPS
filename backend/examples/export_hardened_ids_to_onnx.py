@@ -27,6 +27,7 @@ def export_checkpoint(checkpoint_path: Path, output_path: Path, opset: int = 18)
         dummy_input,
         output_path.as_posix(),
         export_params=True,
+        external_data=False,
         opset_version=opset,
         do_constant_folding=True,
         input_names=["features"],
