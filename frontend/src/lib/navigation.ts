@@ -1,11 +1,11 @@
 import {
   Activity,
   BellRing,
-  BarChart3,
-  FileText,
-  Server,
-  Settings,
-  ShieldAlert,
+  BookOpenText,
+  ChartColumnBig,
+  ClipboardList,
+  Cpu,
+  Radar,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -17,6 +17,7 @@ export interface NavigationItem {
   shortLabel: string;
   view: AppView;
   description: string;
+  section: string;
   allowedRoles?: string[];
 }
 
@@ -24,59 +25,68 @@ export const NAV_ITEMS: NavigationItem[] = [
   {
     icon: Activity,
     label: 'Dashboard',
-    shortLabel: 'Dashboard',
+    shortLabel: 'Overview',
     view: 'dashboard',
-    description: 'Live SOC telemetry, map, alert stream, and response operations.',
+    section: 'Operations',
+    description:
+      'Live command view for queue pressure, model runtime, telemetry health, and response readiness.',
   },
   {
     icon: BellRing,
-    label: 'Alerts',
-    shortLabel: 'Alerts',
+    label: 'Alert queue',
+    shortLabel: 'Queue',
     view: 'alerts',
-    description: 'Unified analyst queue for triage, escalation, reporting, and closure.',
+    section: 'Operations',
+    description: 'Triage detections, assign ownership, write reports, escalate, and close alerts.',
   },
   {
-    icon: ShieldAlert,
-    label: 'Threat Intelligence',
-    shortLabel: 'Threat Intel',
-    view: 'threat-intelligence',
-    description: 'Threat family trends, origin regions, and active adversarial campaigns.',
-  },
-  {
-    icon: Server,
-    label: 'Edge Nodes',
-    shortLabel: 'Nodes',
-    view: 'edge-nodes',
-    description: 'Inference node posture, health, throughput, and deployment readiness.',
-  },
-  {
-    icon: BarChart3,
-    label: 'Analytics',
-    shortLabel: 'Analytics',
+    icon: ChartColumnBig,
+    label: 'SIEM',
+    shortLabel: 'SIEM',
     view: 'analytics',
-    description: 'Severity mix, confidence curves, and attack distribution analytics.',
+    section: 'Operations',
+    description: 'Detection analytics, severity trends, source concentration, and benchmark scorecards.',
   },
   {
-    icon: FileText,
-    label: 'Logs & Forensics',
+    icon: ClipboardList,
+    label: 'Forensics',
     shortLabel: 'Forensics',
     view: 'logs-forensics',
-    description: 'Searchable incident logs, packet metadata, and investigation pivots.',
+    section: 'Operations',
+    description: 'Searchable investigation records, packet fingerprints, raw features, and evidence pivots.',
+  },
+  {
+    icon: Radar,
+    label: 'Threat intel',
+    shortLabel: 'Intel',
+    view: 'threat-intelligence',
+    section: 'Knowledge',
+    description: 'Campaign context, MITRE coverage, risk regions, and priority investigation playbooks.',
+  },
+  {
+    icon: Cpu,
+    label: 'Sensor mesh',
+    shortLabel: 'Nodes',
+    view: 'edge-nodes',
+    section: 'Knowledge',
+    description: 'Edge node posture, telemetry collectors, latency, throughput, and rollout readiness.',
   },
   {
     icon: Users,
-    label: 'SOC Manager',
+    label: 'SOC manager',
     shortLabel: 'Manager',
     view: 'access-control',
-    description: 'User administration, analyst performance, MTTA, MTTD, MTTR, and leadership oversight.',
+    section: 'Leadership',
+    description: 'Staffing, performance, approvals, queue balance, and leadership oversight.',
     allowedRoles: ['SOC Manager', 'Compliance Lead'],
   },
   {
-    icon: Settings,
-    label: 'Settings',
-    shortLabel: 'Settings',
+    icon: BookOpenText,
+    label: 'Guide',
+    shortLabel: 'Guide',
     view: 'settings',
-    description: 'Runtime endpoints, deployment flags, and production readiness controls.',
+    section: 'Leadership',
+    description: 'Deployment wiring, model status, endpoint configuration, and demo integration guidance.',
   },
 ];
 
